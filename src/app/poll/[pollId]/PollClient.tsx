@@ -5,8 +5,11 @@ import Image from "next/image"
 import { useRouter, useSearchParams } from "next/navigation"
 import type { VoteData, ContestantData, CategoryData } from "@/lib/voting-utils"
 import type { ScopeEligibility } from "@/lib/tie-breaker"
+import { hasPollEnded } from "@/lib/poll-status"
 import { ContestantCard } from "./components/ContestantCard"
 import { VoteModal } from "./components/VoteModal"
+import { CategoryList, type CategoryListItem } from "./components/CategoryList"
+import { ContestantSearch, type SearchableContestant } from "./components/ContestantSearch"
 import { Pill } from "@/components/Pill"
 import { ShareButton } from "@/components/ShareButton"
 import { CreateYours } from "@/components/CreateYours"
@@ -49,7 +52,38 @@ export default function PollClient({
   const [activeCategoryId, setActiveCategoryId] = useState(leafCategories[0]?.categoryId)
   const [pendingVote, setPendingVote] = useState<PendingVote | null>(null)
 
+  // Deferred to a client-only effect (like CountdownTimer's own check) so
+  // server-render and first client-render agree — evaluating Date.now()
+  // directly during render risks a hydration mismatch right at the
+  // boundary moment.
+  const [pollEnded, setPollEnded] = useState(false)
+  useEffect(() => {
+    setPollEnded(hasPollEnded(poll.pollEndDate, poll.pollEndTime))
+  }, [poll.pollEndDate, poll.pollEndTime])
+
   const activeCategory = leafCategories.find((c) => c.categoryId === activeCategoryId)
+
+  // Flat, searchable list of every contestant on this poll — built once
+  // from data already loaded on the page (no extra fetch needed for
+  // ContestantSearch below).
+  const searchableContestants = useMemo<SearchableContestant[]>(() => {
+    if (poll.pollType === "group") {
+      return leafCategories.flatMap((c) =>
+        c.contestants.map((ct) => ({
+          contestantId: ct.contestantId,
+          name: ct.name,
+          categoryId: c.categoryId,
+          categoryName: c.name,
+        })),
+      )
+    }
+    return poll.contestants.map((ct) => ({ contestantId: ct.contestantId, name: ct.name }))
+  }, [poll, leafCategories])
+
+  function handleSearchSelect(c: SearchableContestant) {
+    if (c.categoryId) setActiveCategoryId(c.categoryId)
+    setPendingVote({ contestantId: c.contestantId, contestantName: c.name, categoryId: c.categoryId })
+  }
 
   // Deep-link handling: a shared link (see ContestantCard's ShareButton /
   // lib/share.ts's buildVotingShareUrl) carries ?contestant=<id>&cat=<id>.
@@ -120,70 +154,72 @@ export default function PollClient({
       : singleScopeEligibility
 
   const ranked = rankContestants(contestantsForScope)
+  const categoryListItems: CategoryListItem[] = leafCategories.map((c) => ({ categoryId: c.categoryId, name: c.name }))
+  const hasSidebar = poll.pollType === "group" && leafCategories.length > 1
 
   return (
     <Shell poll={poll} pollId={pollId}>
-      {poll.pollType === "group" && leafCategories.length > 1 && (
-        <div className="mb-6 flex flex-wrap gap-2">
-          {leafCategories.map((c) => (
-            <button
-              key={c.categoryId}
-              onClick={() => setActiveCategoryId(c.categoryId)}
-              className={`rounded-full border px-4 py-2 text-sm transition-colors ${
-                c.categoryId === activeCategoryId
-                  ? "border-brass bg-brass/10 text-brass-soft"
-                  : "border-line text-muted hover:text-paper"
-              }`}
-            >
-              {c.name}
-            </button>
-          ))}
-        </div>
+      {searchableContestants.length > 3 && (
+        <ContestantSearch contestants={searchableContestants} onSelect={handleSearchSelect} className="mb-6" />
       )}
 
-      {eligibility?.mode === "closed" && (
-        <div className="mb-6">
-          <Pill tone="muted">Voting closed for this {poll.pollType === "group" ? "category" : "poll"}</Pill>
-        </div>
-      )}
-      {eligibility?.mode === "tiebreaker" && (
-        <div className="mb-6">
-          <Pill tone="brass">
-            Tie-breaker round {eligibility.round} — only tied contestants can receive votes
-          </Pill>
-        </div>
-      )}
+      <div className={hasSidebar ? "md:grid md:grid-cols-[220px_1fr] md:items-start md:gap-6" : ""}>
+        {hasSidebar && (
+          <CategoryList
+            categories={categoryListItems}
+            activeCategoryId={activeCategoryId}
+            onSelect={setActiveCategoryId}
+            className="mb-6 md:sticky md:top-20 md:mb-0"
+          />
+        )}
 
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
-        {ranked.map((c, i) => {
-          const isEligible =
-            !eligibility ||
-            eligibility.mode === "open" ||
-            (eligibility.mode === "tiebreaker" && eligibility.contestantIds.includes(c.contestantId))
-          const categoryId = poll.pollType === "group" ? activeCategoryId : undefined
-          return (
-            <ContestantCard
-              key={c.contestantId}
-              contestantId={c.contestantId}
-              name={c.name}
-              image={c.image}
-              votes={c.votes ?? 0}
-              statsVisible={poll.statsVisible ?? true}
-              rank={i === 0 ? 1 : undefined}
-              disabled={!isEligible}
-              disabledReason={eligibility?.mode === "closed" ? "Closed" : "Not in this round"}
-              shareUrl={buildVotingShareUrl(pollId, c.contestantId, categoryId)}
-              shareText={buildVotingShareMessage(c.name, poll.pollName)}
-              onVote={() =>
-                setPendingVote({
-                  contestantId: c.contestantId,
-                  contestantName: c.name,
-                  categoryId,
-                })
-              }
-            />
-          )
-        })}
+        <div>
+          {eligibility?.mode === "closed" && (
+            <div className="mb-6">
+              <Pill tone="muted">Voting closed for this {poll.pollType === "group" ? "category" : "poll"}</Pill>
+            </div>
+          )}
+          {eligibility?.mode === "tiebreaker" && (
+            <div className="mb-6">
+              <Pill tone="brass">
+                Tie-breaker round {eligibility.round} — only tied contestants can receive votes
+              </Pill>
+            </div>
+          )}
+
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+            {ranked.map((c, i) => {
+              const isEligible =
+                !eligibility ||
+                eligibility.mode === "open" ||
+                (eligibility.mode === "tiebreaker" && eligibility.contestantIds.includes(c.contestantId))
+              const categoryId = poll.pollType === "group" ? activeCategoryId : undefined
+              return (
+                <ContestantCard
+                  key={c.contestantId}
+                  contestantId={c.contestantId}
+                  name={c.name}
+                  image={c.image}
+                  votes={c.votes ?? 0}
+                  statsVisible={poll.statsVisible ?? true}
+                  pollEnded={pollEnded}
+                  rank={i === 0 ? 1 : undefined}
+                  disabled={!isEligible}
+                  disabledReason={eligibility?.mode === "closed" ? "Closed" : "Not in this round"}
+                  shareUrl={buildVotingShareUrl(pollId, c.contestantId, categoryId)}
+                  shareText={buildVotingShareMessage(c.name, poll.pollName)}
+                  onVote={() =>
+                    setPendingVote({
+                      contestantId: c.contestantId,
+                      contestantName: c.name,
+                      categoryId,
+                    })
+                  }
+                />
+              )
+            })}
+          </div>
+        </div>
       </div>
 
       {pendingVote && (

@@ -11,6 +11,8 @@ export interface ContestantCardProps {
   image?: string
   votes: number
   statsVisible: boolean
+  /** Has the poll's end date/time already passed? See lib/poll-status.ts. */
+  pollEnded: boolean
   rank?: number
   disabled?: boolean
   disabledReason?: string
@@ -25,6 +27,7 @@ export function ContestantCard({
   image,
   votes,
   statsVisible,
+  pollEnded,
   rank,
   disabled,
   disabledReason,
@@ -34,13 +37,27 @@ export function ContestantCard({
 }: ContestantCardProps) {
   const src = image?.trim() ? image : dicebearAvatarUrl(name, { style: "avataaars" })
 
+  const isTopRank = rank === 1
+  // The vote COUNT is only ever shown when the organiser has stats
+  // turned on — that never changes just because the poll ended.
+  //
+  // The WINNER badge is different: once the poll has ended, who won is
+  // no longer "live standings" that could sway an in-progress vote —
+  // it's just the result. So it's shown either when stats are on
+  // (as "Leading", same as before, while the poll's still running) OR
+  // once the poll has ended (as "Winner"), even for an organiser who
+  // kept stats hidden throughout — same numbers-hidden guarantee, just
+  // a final answer instead of an ongoing tally.
+  const showBadge = isTopRank && (statsVisible || pollEnded)
+  const badgeLabel = pollEnded ? "WINNER" : "LEADING"
+
   return (
     <div className="overflow-hidden rounded-2xl border border-line bg-ink-2">
       <div className="relative aspect-[4/5] w-full">
         <Image src={src} alt={name} fill className="object-cover" sizes="(max-width: 640px) 50vw, 240px" />
-        {rank === 1 && statsVisible && (
+        {showBadge && (
           <span className="absolute left-3 top-3 rounded-full bg-brass px-2.5 py-1 text-[11px] font-semibold text-on-accent font-mono">
-            LEADING
+            {badgeLabel}
           </span>
         )}
         {shareUrl && (
@@ -59,7 +76,9 @@ export function ContestantCard({
 
         <div className="stub-divider my-4" />
 
-        {disabled ? (
+        {pollEnded ? (
+          <p className="text-xs text-muted">Voting has ended</p>
+        ) : disabled ? (
           <p className="text-xs text-muted">{disabledReason ?? "Voting isn't open here."}</p>
         ) : (
           <Button className="w-full" onClick={onVote}>
