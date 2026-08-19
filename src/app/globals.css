@@ -1,0 +1,165 @@
+@import "tailwindcss";
+
+/*
+  Design system — "ballot stub"
+
+  Spotix is a ticketing company. This is a voting product. The signature
+  element (see .stub-divider below) is a torn perforated ticket-stub edge
+  between a contestant's photo and their vote count/action — the visual
+  grammar of a raffle or awards ballot, borrowed straight from the paper
+  ticket stubs Spotix already prints for events. It's the one place we
+  spend the design's "boldness"; everything else stays quiet.
+
+  Theming: this app ships two modes — light (default, white + the brand
+  purple #6b2fa5, matching spotix-user) and dark (the original "ballot
+  stub" ink palette). `brass`/`brass-soft`/`purple`/`purple-soft` are the
+  brand accent and stay the SAME purple in both modes on purpose — only
+  the surface tokens (ink/paper/line/muted/etc.) swap. See ThemeToggle +
+  lib/theme/theme-context.tsx for how the `.dark` class gets applied.
+*/
+
+/* Lets `dark:` utilities key off a `.dark` class instead of only
+   `prefers-color-scheme` — required for a user-toggleable theme under
+   Tailwind v4's CSS-first config. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-display: var(--font-display);
+  --font-body: var(--font-body);
+  --font-mono: var(--font-mono);
+
+  --color-ink: #ffffff;
+  --color-ink-2: #f6f2fb;
+  --color-ink-3: #efe4fa;
+  --color-line: #e3d7f5;
+
+  --color-paper: #1d1730;
+  --color-paper-ink: #ffffff;
+
+  --color-brass: #6b2fa5;
+  --color-brass-soft: #8b4fc9;
+
+  --color-purple: #6b2fa5;
+  --color-purple-soft: #9b6fd1;
+
+  --color-muted: #6b6280;
+
+  --color-success: #1f9d55;
+  --color-danger: #d1453b;
+
+  /* Always-white text for anything sitting on the solid brand-purple
+     fill (buttons, badges) — needs to stay legible regardless of theme,
+     unlike `paper` which deliberately flips between the two. */
+  --color-on-accent: #ffffff;
+}
+
+/* Light mode (default) — explicit so it wins over the .dark overrides
+   below regardless of stylesheet order, and reads clearly on its own. */
+:root {
+  --color-ink: #ffffff;
+  --color-ink-2: #f6f2fb;
+  --color-ink-3: #efe4fa;
+  --color-line: #e3d7f5;
+
+  --color-paper: #1d1730;
+  --color-paper-ink: #ffffff;
+
+  --color-brass: #6b2fa5;
+  --color-brass-soft: #8b4fc9;
+
+  --color-muted: #6b6280;
+
+  --color-success: #1f9d55;
+  --color-danger: #d1453b;
+}
+
+/* Dark mode — the original "ballot stub" ink palette. Brand purple
+   (brass/purple) is intentionally unchanged from light mode. */
+.dark {
+  --color-ink: #150f20;
+  --color-ink-2: #1d1730;
+  --color-ink-3: #241c3c;
+  --color-line: #33285199;
+
+  --color-paper: #f7f1e1;
+  --color-paper-ink: #1d1730;
+
+  --color-brass: #6b2fa5;
+  --color-brass-soft: #a97fd6;
+
+  --color-muted: #9a8fbe;
+
+  --color-success: #4e9c6e;
+  --color-danger: #c0503f;
+}
+
+html,
+body {
+  padding: 0;
+  margin: 0;
+  background: var(--color-ink);
+  color: var(--color-paper);
+  font-family: var(--font-body), ui-sans-serif, system-ui, sans-serif;
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+.font-display {
+  font-family: var(--font-display), serif;
+}
+
+.font-mono {
+  font-family: var(--font-mono), ui-monospace, monospace;
+}
+
+/* Signature element: perforated ticket-stub divider.
+   A dashed hairline with punched circular notches at each end, echoing
+   where a paper stub would be torn from the main ticket. */
+.stub-divider {
+  position: relative;
+  height: 1px;
+  background-image: repeating-linear-gradient(
+    to right,
+    var(--color-brass) 0 6px,
+    transparent 6px 14px
+  );
+  opacity: 0.6;
+}
+.stub-divider::before,
+.stub-divider::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  background: var(--color-ink);
+  transform: translateY(-50%);
+}
+.stub-divider::before {
+  left: -7px;
+}
+.stub-divider::after {
+  right: -7px;
+}
+
+/* Accessibility floor: visible keyboard focus everywhere */
+:focus-visible {
+  outline: 2px solid var(--color-brass-soft);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
