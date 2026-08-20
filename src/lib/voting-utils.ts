@@ -37,7 +37,7 @@
 // just the worst-case fallback if that call ever fails or is skipped.
 import { adminDb } from "./firebase-admin"
 import { FieldValue, Timestamp } from "firebase-admin/firestore"
-import { cacheGet, cacheSet } from "./redis"
+import { getOrSetSingleFlight } from "./redis"
 import {
   type PollType,
   type PollStatus,
@@ -229,24 +229,31 @@ function buildCategoryTreeFromDocs(docs: RawCategoryDoc[]): CategoryData[] {
  * allocate-vote.js invalidates on every credited vote — all three share
  * one Upstash instance, so a vote from moments ago is already reflected
  * here without this file needing its own invalidation hook.
+ *
+ * Single-flight on miss (see getOrSetSingleFlight in ./redis): allocate-vote.js
+ * busts this key on EVERY credited vote, so during a vote spike this goes
+ * cold repeatedly, right when concurrent page-load traffic is highest. A
+ * plain get/set here would mean every request racing through that gap
+ * independently pays for the full 40-doc-or-more subcollection query. The
+ * lock elects one leader to hit Firestore per invalidation; everyone else
+ * waits on the cache instead.
  */
 async function fetchCategoryTreeForPoll(pollId: string, legacyCategories: any[]): Promise<CategoryData[]> {
   const cacheKey = categoryTreeCacheKey(pollId)
-  const cached = await cacheGet<CategoryData[]>(cacheKey)
-  if (cached) return cached
 
-  try {
-    const snap = await adminDb.collection("voting").doc(pollId).collection("categories").get()
-    const tree = snap.empty
-      ? serializeCategories(legacyCategories ?? [])
-      : buildCategoryTreeFromDocs(snap.docs.map((d) => d.data() as RawCategoryDoc))
+  const tree = await getOrSetSingleFlight<CategoryData[]>(cacheKey, CATEGORY_TREE_CACHE_TTL_SECONDS, async () => {
+    try {
+      const snap = await adminDb.collection("voting").doc(pollId).collection("categories").get()
+      return snap.empty
+        ? serializeCategories(legacyCategories ?? [])
+        : buildCategoryTreeFromDocs(snap.docs.map((d) => d.data() as RawCategoryDoc))
+    } catch (err) {
+      console.error(`[voting-utils] fetchCategoryTreeForPoll failed for ${pollId}:`, err)
+      return null // don't cache a failure — next request retries against Firestore
+    }
+  })
 
-    await cacheSet(cacheKey, tree, CATEGORY_TREE_CACHE_TTL_SECONDS)
-    return tree
-  } catch (err) {
-    console.error(`[voting-utils] fetchCategoryTreeForPoll failed for ${pollId}:`, err)
-    return serializeCategories(legacyCategories ?? [])
-  }
+  return tree ?? serializeCategories(legacyCategories ?? [])
 }
 
 function serializePollData(data: any): VoteData {
@@ -385,6 +392,12 @@ type ResolvedPoll = { voteId: string; creatorId: string; pollData: VoteData }
  *
  * Short TTL (see file header) because there's no write-side invalidation
  * hook into this from the vote-crediting webhook.
+ *
+ * Both lookup functions below resolve through getOrSetSingleFlight (see
+ * ./redis), so concurrent requests landing in the ~15s-recurring
+ * cache-empty window elect one leader to hit Firestore instead of each
+ * paying for their own doc read (and, for group polls, their own
+ * category-subcollection fetch on top of that).
  */
 const POLL_LOOKUP_CACHE_TTL_SECONDS = 15
 function pollLookupCacheKey(input: string): string {
@@ -411,108 +424,101 @@ export async function getPollByFlatId(
   creatorIdHint?: string,
 ): Promise<ResolvedPoll | null> {
   const cacheKey = pollLookupCacheKey(creatorIdHint ? `${creatorIdHint}:${pollId}` : pollId)
-  const cached = await cacheGet<ResolvedPoll>(cacheKey)
-  if (cached) return cached
 
-  try {
-    // 1. Flat top-level doc — the common case.
-    const snap = await adminDb.collection("voting").doc(pollId).get()
-    if (snap.exists) {
-      let d = snap.data()!
-      if (d.pollName) {
-        d = await tickAndPersistTieBreakers(pollId, d)
-        const creatorId = d.creatorId ?? d.organizerId ?? ""
-        const result: ResolvedPoll = { voteId: pollId, creatorId, pollData: serializePollData({ ...d, creatorId }) }
-        if (result.pollData.pollType === "group") {
-          result.pollData.categories = await fetchCategoryTreeForPoll(pollId, d.categories ?? [])
-        }
-        await cacheSet(cacheKey, result, POLL_LOOKUP_CACHE_TTL_SECONDS)
-        return result
-      }
-    }
-
-    // 2. Legacy nested poll — only reachable if the caller told us who the
-    // creator is, since the flat miss above gives no way to reverse-lookup
-    // a nested doc's parent on its own.
-    if (creatorIdHint) {
-      const nestedSnap = await adminDb
-        .collection("voting").doc(creatorIdHint)
-        .collection("votes").doc(pollId).get()
-      if (nestedSnap.exists) {
-        const d = nestedSnap.data()!
+  return getOrSetSingleFlight<ResolvedPoll>(cacheKey, POLL_LOOKUP_CACHE_TTL_SECONDS, async () => {
+    try {
+      // 1. Flat top-level doc — the common case.
+      const snap = await adminDb.collection("voting").doc(pollId).get()
+      if (snap.exists) {
+        let d = snap.data()!
         if (d.pollName) {
-          const result: ResolvedPoll = {
-            voteId: pollId,
-            creatorId: creatorIdHint,
-            pollData: serializePollData({ ...d, creatorId: creatorIdHint }),
+          d = await tickAndPersistTieBreakers(pollId, d)
+          const creatorId = d.creatorId ?? d.organizerId ?? ""
+          const result: ResolvedPoll = { voteId: pollId, creatorId, pollData: serializePollData({ ...d, creatorId }) }
+          if (result.pollData.pollType === "group") {
+            result.pollData.categories = await fetchCategoryTreeForPoll(pollId, d.categories ?? [])
           }
-          await cacheSet(cacheKey, result, POLL_LOOKUP_CACHE_TTL_SECONDS)
           return result
         }
       }
-    }
 
-    return null
-  } catch { return null }
+      // 2. Legacy nested poll — only reachable if the caller told us who the
+      // creator is, since the flat miss above gives no way to reverse-lookup
+      // a nested doc's parent on its own.
+      if (creatorIdHint) {
+        const nestedSnap = await adminDb
+          .collection("voting").doc(creatorIdHint)
+          .collection("votes").doc(pollId).get()
+        if (nestedSnap.exists) {
+          const d = nestedSnap.data()!
+          if (d.pollName) {
+            return {
+              voteId: pollId,
+              creatorId: creatorIdHint,
+              pollData: serializePollData({ ...d, creatorId: creatorIdHint }),
+            }
+          }
+        }
+      }
+
+      return null
+    } catch { return null }
+  })
 }
 
 export async function getPollByName(
   pollNameOrId: string,
 ): Promise<ResolvedPoll | null> {
   const cacheKey = pollLookupCacheKey(pollNameOrId)
-  const cached = await cacheGet<ResolvedPoll>(cacheKey)
-  if (cached) return cached
 
-  try {
-    // 1. Try as direct flat pollId
+  return getOrSetSingleFlight<ResolvedPoll>(cacheKey, POLL_LOOKUP_CACHE_TTL_SECONDS, async () => {
     try {
-      const directSnap = await adminDb.collection("voting").doc(pollNameOrId).get()
-      if (directSnap.exists) {
-        let d = directSnap.data()!
-        if (d.pollName) {
-          d = await tickAndPersistTieBreakers(directSnap.id, d)
-          const creatorId = d.creatorId ?? d.organizerId ?? ""
-          const result: ResolvedPoll = { voteId: directSnap.id, creatorId, pollData: serializePollData({ ...d, creatorId }) }
-          if (result.pollData.pollType === "group") {
-            result.pollData.categories = await fetchCategoryTreeForPoll(directSnap.id, d.categories ?? [])
+      // 1. Try as direct flat pollId
+      try {
+        const directSnap = await adminDb.collection("voting").doc(pollNameOrId).get()
+        if (directSnap.exists) {
+          let d = directSnap.data()!
+          if (d.pollName) {
+            d = await tickAndPersistTieBreakers(directSnap.id, d)
+            const creatorId = d.creatorId ?? d.organizerId ?? ""
+            const result: ResolvedPoll = { voteId: directSnap.id, creatorId, pollData: serializePollData({ ...d, creatorId }) }
+            if (result.pollData.pollType === "group") {
+              result.pollData.categories = await fetchCategoryTreeForPoll(directSnap.id, d.categories ?? [])
+            }
+            return result
           }
-          await cacheSet(cacheKey, result, POLL_LOOKUP_CACHE_TTL_SECONDS)
+        }
+      } catch { /* continue */ }
+
+      // 2. Try flat query by pollName
+      try {
+        const flatSnap = await adminDb
+          .collection("voting")
+          .where("pollName", "==", pollNameOrId)
+          .limit(1)
+          .get()
+        if (!flatSnap.empty) {
+          const flatDoc   = flatSnap.docs[0]
+          let d           = flatDoc.data()
+          d = await tickAndPersistTieBreakers(flatDoc.id, d)
+          const creatorId = d.creatorId ?? d.organizerId ?? ""
+          const result: ResolvedPoll = { voteId: flatDoc.id, creatorId, pollData: serializePollData({ ...d, creatorId }) }
+          if (result.pollData.pollType === "group") {
+            result.pollData.categories = await fetchCategoryTreeForPoll(flatDoc.id, d.categories ?? [])
+          }
           return result
         }
-      }
-    } catch { /* continue */ }
+      } catch { /* continue */ }
 
-    // 2. Try flat query by pollName
-    try {
-      const flatSnap = await adminDb
-        .collection("voting")
-        .where("pollName", "==", pollNameOrId)
-        .limit(1)
-        .get()
-      if (!flatSnap.empty) {
-        const flatDoc   = flatSnap.docs[0]
-        let d           = flatDoc.data()
-        d = await tickAndPersistTieBreakers(flatDoc.id, d)
-        const creatorId = d.creatorId ?? d.organizerId ?? ""
-        const result: ResolvedPoll = { voteId: flatDoc.id, creatorId, pollData: serializePollData({ ...d, creatorId }) }
-        if (result.pollData.pollType === "group") {
-          result.pollData.categories = await fetchCategoryTreeForPoll(flatDoc.id, d.categories ?? [])
-        }
-        await cacheSet(cacheKey, result, POLL_LOOKUP_CACHE_TTL_SECONDS)
-        return result
-      }
-    } catch { /* continue */ }
+      // 3. pollKey lookup (legacy nested voting/{userId}/votes/{voteId} polls)
+      const pollKey    = pollNameToKey(pollNameOrId)
+      const pollKeyDoc = await adminDb.collection("pollKey").doc(pollKey).get()
+      if (!pollKeyDoc.exists) return null
+      const { creatorId, voteId } = pollKeyDoc.data()!
+      const pollData = await getPollDetails(creatorId, voteId)
+      if (!pollData) return null
 
-    // 3. pollKey lookup (legacy nested voting/{userId}/votes/{voteId} polls)
-    const pollKey    = pollNameToKey(pollNameOrId)
-    const pollKeyDoc = await adminDb.collection("pollKey").doc(pollKey).get()
-    if (!pollKeyDoc.exists) return null
-    const { creatorId, voteId } = pollKeyDoc.data()!
-    const pollData = await getPollDetails(creatorId, voteId)
-    if (!pollData) return null
-
-    const result: ResolvedPoll = { voteId, creatorId, pollData }
-    await cacheSet(cacheKey, result, POLL_LOOKUP_CACHE_TTL_SECONDS)
-    return result
-  } catch { return null }
+      return { voteId, creatorId, pollData }
+    } catch { return null }
+  })
 }

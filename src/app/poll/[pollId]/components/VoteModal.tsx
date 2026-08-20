@@ -303,7 +303,7 @@ export function VoteModal({
             {error && <p className="text-sm text-danger">{error}</p>}
 
             <Button type="submit" className="w-full" disabled={submitting}>
-              {submitting ? "Starting payment…" : `Continue — ₦${total.toLocaleString()}`}
+              {submitting ? "Starting payment…" : `Pay ₦${total.toLocaleString()}`}
             </Button>
           </form>
         )}
