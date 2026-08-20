@@ -8,7 +8,7 @@ import type { ScopeEligibility } from "@/lib/tie-breaker"
 import { hasPollEnded } from "@/lib/poll-status"
 import { ContestantCard } from "./components/ContestantCard"
 import { VoteModal } from "./components/VoteModal"
-import { CategoryList, type CategoryListItem } from "./components/CategoryList"
+import { CategoryList, type CategoryTreeNode } from "./components/CategoryList"
 import { ContestantSearch, type SearchableContestant } from "./components/ContestantSearch"
 import { Pill } from "@/components/Pill"
 import { ShareButton } from "@/components/ShareButton"
@@ -20,15 +20,39 @@ import { LinkedEventBadge } from "@/components/LinkedEventBadge"
 import { buildVotingShareUrl, buildVotingShareMessage } from "@/lib/share"
 
 type PendingVote = { contestantId: string; contestantName: string; categoryId?: string }
+type LeafCategory = CategoryData & { breadcrumb: string }
 
 function rankContestants(contestants: ContestantData[]) {
   return [...contestants].sort((a, b) => (b.votes ?? 0) - (a.votes ?? 0))
 }
 
-function findLeafCategories(categories: CategoryData[]): CategoryData[] {
-  return categories.flatMap((c) =>
-    c.subcategories?.length ? findLeafCategories(c.subcategories) : [c],
-  )
+/**
+ * Flattens the category tree to just its leaves (the selectable,
+ * contestant-holding nodes) — arbitrary depth, however far an organiser
+ * nested things in booker's CategoryBlock.tsx. Used for lookups
+ * (active-category resolution, deep links, search) where hierarchy
+ * doesn't matter, only "does a leaf with this id/contestant exist".
+ * Each leaf carries its full ancestor breadcrumb (e.g. "Male › Under 18")
+ * since at real nesting depth, two different branches can easily reuse
+ * the same leaf name — see ContestantSearch's categoryName display.
+ */
+function findLeafCategories(categories: CategoryData[], parentPath: string[] = []): LeafCategory[] {
+  return categories.flatMap((c) => {
+    const path = [...parentPath, c.name]
+    return c.subcategories?.length
+      ? findLeafCategories(c.subcategories, path)
+      : [{ ...c, breadcrumb: path.join(" › ") }]
+  })
+}
+
+/** Converts the same tree into the shape CategoryList renders — kept separate from
+ *  findLeafCategories above since this preserves EVERY level (not just leaves). */
+function toCategoryTree(categories: CategoryData[]): CategoryTreeNode[] {
+  return categories.map((c) => ({
+    categoryId: c.categoryId,
+    name: c.name,
+    children: c.subcategories?.length ? toCategoryTree(c.subcategories) : [],
+  }))
 }
 
 export default function PollClient({
@@ -47,6 +71,10 @@ export default function PollClient({
 
   const leafCategories = useMemo(
     () => (poll.pollType === "group" ? findLeafCategories(poll.categories ?? []) : []),
+    [poll],
+  )
+  const categoryTree = useMemo(
+    () => (poll.pollType === "group" ? toCategoryTree(poll.categories ?? []) : []),
     [poll],
   )
   const [activeCategoryId, setActiveCategoryId] = useState(leafCategories[0]?.categoryId)
@@ -73,7 +101,7 @@ export default function PollClient({
           contestantId: ct.contestantId,
           name: ct.name,
           categoryId: c.categoryId,
-          categoryName: c.name,
+          categoryName: c.breadcrumb,
         })),
       )
     }
@@ -154,8 +182,7 @@ export default function PollClient({
       : singleScopeEligibility
 
   const ranked = rankContestants(contestantsForScope)
-  const categoryListItems: CategoryListItem[] = leafCategories.map((c) => ({ categoryId: c.categoryId, name: c.name }))
-  const hasSidebar = poll.pollType === "group" && leafCategories.length > 1
+  const hasCategories = poll.pollType === "group" && categoryTree.length > 0
 
   return (
     <Shell poll={poll} pollId={pollId}>
@@ -163,13 +190,12 @@ export default function PollClient({
         <ContestantSearch contestants={searchableContestants} onSelect={handleSearchSelect} className="mb-6" />
       )}
 
-      <div className={hasSidebar ? "md:grid md:grid-cols-[220px_1fr] md:items-start md:gap-6" : ""}>
-        {hasSidebar && (
+      <div className={hasCategories ? "md:grid md:grid-cols-[240px_1fr] md:items-start md:gap-6" : ""}>
+        {hasCategories && (
           <CategoryList
-            categories={categoryListItems}
+            nodes={categoryTree}
             activeCategoryId={activeCategoryId}
-            onSelect={setActiveCategoryId}
-            className="mb-6 md:sticky md:top-20 md:mb-0"
+            onSelectLeaf={setActiveCategoryId}
           />
         )}
 
