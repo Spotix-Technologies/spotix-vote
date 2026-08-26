@@ -43,6 +43,15 @@ const resolvedBackendPattern = backendRemotePattern()
 
 const nextConfig: NextConfig = {
   images: {
+    // The dicebear avatar route (v1/dicebear/:seed) returns SVGs.
+    // next/image blocks SVG optimisation by default — even for
+    // allowlisted hosts — since an SVG can carry an inline <script>.
+    // dangerouslyAllowSVG turns that back on; the CSP below is required
+    // alongside it so Next.js actually serves the SVG instead of
+    // stripping it, and keeps any embedded script from executing.
+    dangerouslyAllowSVG: true,
+    contentDispositionType: "attachment",
+    contentSecurityPolicy: "default-src 'self'; script-src 'none'; sandbox;",
     remotePatterns: [
       // Always allow localhost on any port — covers local dev even if
       // NEXT_PUBLIC_BACKEND_URL isn't set or points somewhere else
@@ -65,6 +74,14 @@ const nextConfig: NextConfig = {
         protocol: "https",
         hostname: "res.cloudinary.com",
         pathname: "/**",
+      },
+      // UploadThing-hosted images (pollImage/banner and other assets
+      // uploaded via UploadThing) are served from utfs.io under /f/**.
+      {
+        protocol: "https",
+        hostname: "utfs.io",
+        port: "",
+        pathname: "/f/**",
       },
     ],
   },
