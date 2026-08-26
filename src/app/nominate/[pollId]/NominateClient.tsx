@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import Image from "next/image"
 import { useRouter, useSearchParams } from "next/navigation"
 import type { NominationPollRow } from "@/lib/nomination-db"
@@ -14,6 +14,49 @@ import { Footer } from "@/components/Footer"
 import { buildNominationShareUrl, buildNominationShareMessage } from "@/lib/share"
 
 type Nominee = { nomineeId: string; name: string; count: number }
+
+function SearchIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-muted">
+      <circle cx="11" cy="11" r="7" />
+      <path d="m20 20-3.5-3.5" />
+    </svg>
+  )
+}
+
+function SearchInput({
+  value,
+  onChange,
+  placeholder,
+  className = "",
+}: {
+  value: string
+  onChange: (v: string) => void
+  placeholder: string
+  className?: string
+}) {
+  return (
+    <div className={`flex items-center gap-2 rounded-full border border-line bg-ink-2 px-4 py-2.5 ${className}`}>
+      <SearchIcon />
+      <input
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        className="w-full bg-transparent text-sm text-paper outline-none placeholder:text-muted"
+      />
+      {value.length > 0 && (
+        <button
+          type="button"
+          onClick={() => onChange("")}
+          aria-label="Clear search"
+          className="shrink-0 text-muted hover:text-paper"
+        >
+          ✕
+        </button>
+      )}
+    </div>
+  )
+}
 
 export default function NominateClient({
   pollId,
@@ -35,6 +78,24 @@ export default function NominateClient({
   const [nominees, setNominees] = useState<Nominee[]>([])
   const [loading, setLoading] = useState(true)
   const [prefillName, setPrefillName] = useState<string | undefined>()
+
+  // Search: one bar filters which category chips are shown, the other
+  // filters the currently-loaded nominee list (e.g. to check whether
+  // someone's already been nominated before adding them again).
+  const [categoryQuery, setCategoryQuery] = useState("")
+  const [nomineeQuery, setNomineeQuery] = useState("")
+
+  const filteredCategories = useMemo(() => {
+    const q = categoryQuery.trim().toLowerCase()
+    if (!q) return poll.categories
+    return poll.categories.filter((c) => c.name.toLowerCase().includes(q))
+  }, [poll.categories, categoryQuery])
+
+  const filteredNominees = useMemo(() => {
+    const q = nomineeQuery.trim().toLowerCase()
+    if (!q) return nominees
+    return nominees.filter((n) => n.name.toLowerCase().includes(q))
+  }, [nominees, nomineeQuery])
 
   useEffect(() => {
     if (!activeCategoryId) return
@@ -66,6 +127,11 @@ export default function NominateClient({
     router.replace(`/nominate/${encodeURIComponent(pollId)}`, { scroll: false })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loading])
+
+  function handleSelectCategory(categoryId: string) {
+    setActiveCategoryId(categoryId)
+    setNomineeQuery("")
+  }
 
   const closed = poll.status === "closed"
   const activeCategory = poll.categories.find((c) => c.categoryId === activeCategoryId)
@@ -102,20 +168,32 @@ export default function NominateClient({
         </div>
 
         {poll.categories.length > 1 && (
-          <div className="mt-6 flex flex-wrap gap-2">
-            {poll.categories.map((c) => (
-              <button
-                key={c.categoryId}
-                onClick={() => setActiveCategoryId(c.categoryId)}
-                className={`rounded-full border px-4 py-2 text-sm transition-colors ${
-                  c.categoryId === activeCategoryId
-                    ? "border-brass bg-brass/10 text-brass-soft"
-                    : "border-line text-muted hover:text-paper"
-                }`}
-              >
-                {c.name}
-              </button>
-            ))}
+          <div className="mt-6">
+            <SearchInput value={categoryQuery} onChange={setCategoryQuery} placeholder="Search categories…" />
+
+            {/* Horizontally scrollable so a long category list stays one
+                row instead of wrapping and pushing the form far down the
+                page — swipe/scroll sideways to browse, or use the search
+                bar above to jump straight to one. */}
+            <div className="mt-3 -mx-4 flex gap-2 overflow-x-auto px-4 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:mx-0 sm:px-0">
+              {filteredCategories.length === 0 ? (
+                <p className="py-2 text-sm text-muted">No categories match "{categoryQuery}".</p>
+              ) : (
+                filteredCategories.map((c) => (
+                  <button
+                    key={c.categoryId}
+                    onClick={() => handleSelectCategory(c.categoryId)}
+                    className={`shrink-0 whitespace-nowrap rounded-full border px-4 py-2 text-sm transition-colors ${
+                      c.categoryId === activeCategoryId
+                        ? "border-brass bg-brass/10 text-brass-soft"
+                        : "border-line text-muted hover:text-paper"
+                    }`}
+                  >
+                    {c.name}
+                  </button>
+                ))
+              )}
+            </div>
           </div>
         )}
 
@@ -150,13 +228,30 @@ export default function NominateClient({
 
         <div className="stub-divider my-8" />
 
+        {activeCategory && (
+          <p className="mb-3 text-sm font-medium text-muted">
+            Category: <span className="text-paper">{activeCategory.name}</span>
+          </p>
+        )}
+
+        {nominees.length > 1 && (
+          <SearchInput
+            value={nomineeQuery}
+            onChange={setNomineeQuery}
+            placeholder="Search nominees…"
+            className="mb-4"
+          />
+        )}
+
         <div className="space-y-2">
           {loading ? (
             <p className="text-center text-sm text-muted">Loading nominees…</p>
           ) : nominees.length === 0 ? (
             <p className="text-center text-sm text-muted">No nominations yet — be the first.</p>
+          ) : filteredNominees.length === 0 ? (
+            <p className="text-center text-sm text-muted">No nominees match "{nomineeQuery}".</p>
           ) : (
-            nominees.map((n) => (
+            filteredNominees.map((n) => (
               <NomineeCard
                 key={n.nomineeId}
                 name={n.name}

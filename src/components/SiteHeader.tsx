@@ -1,13 +1,17 @@
+"use client"
+
 import Image from "next/image"
 import Link from "next/link"
 import { ThemeToggle } from "./ThemeToggle"
+import { UserMenu } from "./UserMenu"
 
 /**
  * src/components/SiteHeader.tsx
  *
- * Sticky top bar used on both the poll and nominate pages — replaces
- * the old "ThemeToggle floating over the hero image" placement, which
- * scrolled away with the hero instead of staying put.
+ * Sticky top bar used across the app (poll, nominate, elections,
+ * election ballot, and now auth pages). Client component because
+ * UserMenu needs the browser Supabase session to decide between a
+ * "Log in" button and the signed-in avatar dropdown — see that file.
  */
 export function SiteHeader({ title }: { title: string }) {
   return (
@@ -26,7 +30,10 @@ export function SiteHeader({ title }: { title: string }) {
           </span>
         </div>
 
-        <ThemeToggle className="shrink-0" />
+        <div className="flex shrink-0 items-center gap-2">
+          <ThemeToggle />
+          <UserMenu />
+        </div>
       </div>
     </header>
   )

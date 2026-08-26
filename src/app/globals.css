@@ -31,7 +31,7 @@
   --color-ink: #ffffff;
   --color-ink-2: #f6f2fb;
   --color-ink-3: #efe4fa;
-  --color-line: #e3d7f5;
+  --color-line: #cbb3e8;
 
   --color-paper: #1d1730;
   --color-paper-ink: #ffffff;
@@ -59,15 +59,7 @@
   --color-ink: #ffffff;
   --color-ink-2: #f6f2fb;
   --color-ink-3: #efe4fa;
-  --color-line: #e3d7f5;
-
-  --color-paper: #1d1730;
-  --color-paper-ink: #ffffff;
-
-  --color-brass: #6b2fa5;
-  --color-brass-soft: #8b4fc9;
-
-  --color-muted: #6b6280;
+  --color-line: #cbb3e8;
 
   --color-success: #1f9d55;
   --color-danger: #d1453b;
@@ -162,4 +154,28 @@ body {
     transition-duration: 0.001ms !important;
     scroll-behavior: auto !important;
   }
+}
+
+/* app/auth/otp/OtpClient.tsx — the digit boxes arrange into a ring and
+   spin as a whole while verifyOtp() is in flight. Rotating the wrapper
+   (not each input individually) is deliberate: each input already has
+   an inline transform for its ring position, and an inline style always
+   wins over a CSS animation targeting the same property, so animating
+   the parent is the only way this actually rotates. */
+@keyframes otp-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+.otp-spin-wrapper {
+  animation: otp-spin 2.4s linear infinite;
+}
+
+@keyframes otp-center-fade {
+  0% { opacity: 0; transform: translateY(4px); }
+  15% { opacity: 1; transform: translateY(0); }
+  85% { opacity: 1; }
+  100% { opacity: 0; }
+}
+.otp-center-text {
+  animation: otp-center-fade 2s ease-in-out infinite;
 }

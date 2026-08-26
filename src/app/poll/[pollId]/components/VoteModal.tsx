@@ -6,8 +6,8 @@ import { ensurePaystackScriptLoaded, isPaystackReady } from "@/lib/paystack/pays
 import { upsertPaystackCustomer } from "@/lib/paystack/paystack-customer"
 import { openVoteCheckout } from "@/lib/paystack/vote-checkout"
 import { findPaymentMethod, type PaymentMethodId } from "@/lib/paystack/payment-channels"
-import { PaymentMethodPicker } from "./payment/PaymentMethodPicker"
-import { PaymentMethodNotice } from "./payment/PaymentMethodNotice"
+import { PaymentMethodPicker } from "@/components/payment/PaymentMethodPicker"
+import { PaymentMethodNotice } from "@/components/payment/PaymentMethodNotice"
 
 export interface VoteModalProps {
   pollId: string
@@ -19,6 +19,15 @@ export interface VoteModalProps {
   contestantName: string
   categoryId?: string
   onClose: () => void
+  /**
+   * The signed-in voter (Supabase Auth session), if any — resolved
+   * server-side in page.tsx and threaded down through PollClient.
+   * When present, the details step skips name/email entirely (the
+   * payref route resolves those from the session cookie anyway; this
+   * prop only exists so the FORM doesn't ask for what we already
+   * have). Phone stays editable either way — see the phone field below.
+   */
+  voter?: { email: string; name: string; phone: string | null } | null
 }
 
 // Spotix's standard buyer-side service fee. Kept in sync with the
@@ -42,12 +51,14 @@ export function VoteModal({
   contestantName,
   categoryId,
   onClose,
+  voter,
 }: VoteModalProps) {
+  const isLoggedIn = !!voter
   const [step, setStep] = useState<Step>("details")
   const [voteCount, setVoteCount] = useState(1)
   const [guestName, setGuestName] = useState("")
   const [guestEmail, setGuestEmail] = useState("")
-  const [guestPhone, setGuestPhone] = useState("")
+  const [guestPhone, setGuestPhone] = useState(voter?.phone ?? "")
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -79,7 +90,7 @@ export function VoteModal({
     e.preventDefault()
     setError(null)
 
-    if (!guestName.trim() || !guestEmail.trim()) {
+    if (!isLoggedIn && (!guestName.trim() || !guestEmail.trim())) {
       setError("Name and email are required.")
       return
     }
@@ -254,42 +265,51 @@ export function VoteModal({
               </div>
             </div>
 
-            <div>
-              <label className="mb-1 block text-xs uppercase tracking-wide text-muted" htmlFor="guestName">
-                Full name
-              </label>
-              <input
-                id="guestName"
-                className="w-full rounded-lg border border-line bg-ink px-3 py-2 text-paper outline-none focus-visible:border-brass"
-                value={guestName}
-                onChange={(e) => setGuestName(e.target.value)}
-                required
-              />
-            </div>
+            {isLoggedIn ? (
+              <div className="rounded-lg border border-line bg-ink-2 px-3 py-2.5 text-sm text-muted">
+                Voting as <span className="text-paper">{voter!.name}</span> ({voter!.email})
+              </div>
+            ) : (
+              <>
+                <div>
+                  <label className="mb-1 block text-xs uppercase tracking-wide text-muted" htmlFor="guestName">
+                    Full name
+                  </label>
+                  <input
+                    id="guestName"
+                    className="w-full rounded-lg border border-line bg-ink px-3 py-2 text-paper outline-none focus-visible:border-brass"
+                    value={guestName}
+                    onChange={(e) => setGuestName(e.target.value)}
+                    required
+                  />
+                </div>
 
-            <div>
-              <label className="mb-1 block text-xs uppercase tracking-wide text-muted" htmlFor="guestEmail">
-                Email
-              </label>
-              <input
-                id="guestEmail"
-                type="email"
-                className="w-full rounded-lg border border-line bg-ink px-3 py-2 text-paper outline-none focus-visible:border-brass"
-                value={guestEmail}
-                onChange={(e) => setGuestEmail(e.target.value)}
-                required
-              />
-            </div>
+                <div>
+                  <label className="mb-1 block text-xs uppercase tracking-wide text-muted" htmlFor="guestEmail">
+                    Email
+                  </label>
+                  <input
+                    id="guestEmail"
+                    type="email"
+                    className="w-full rounded-lg border border-line bg-ink px-3 py-2 text-paper outline-none focus-visible:border-brass"
+                    value={guestEmail}
+                    onChange={(e) => setGuestEmail(e.target.value)}
+                    required
+                  />
+                </div>
+              </>
+            )}
 
             <div>
               <label className="mb-1 block text-xs uppercase tracking-wide text-muted" htmlFor="guestPhone">
-                Phone (optional)
+                Phone {isLoggedIn ? "" : "(optional)"}
               </label>
               <input
                 id="guestPhone"
                 className="w-full rounded-lg border border-line bg-ink px-3 py-2 text-paper outline-none focus-visible:border-brass"
                 value={guestPhone}
                 onChange={(e) => setGuestPhone(e.target.value)}
+                placeholder={isLoggedIn ? "We'll save this to your account" : undefined}
               />
             </div>
 

@@ -60,11 +60,14 @@ export default function PollClient({
   creatorId,
   poll,
   singleScopeEligibility,
+  voter,
 }: {
   pollId: string
   creatorId: string
   poll: VoteData
   singleScopeEligibility: ScopeEligibility | null
+  /** Signed-in voter (Supabase Auth session), resolved server-side in page.tsx. */
+  voter?: { email: string; name: string; phone: string | null } | null
 }) {
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -213,6 +216,16 @@ export default function PollClient({
             </div>
           )}
 
+          {/* Desktop already shows the active leaf highlighted in the
+              always-visible sidebar, so this is mobile-only — it's the
+              confirmation that a category switch actually landed, now
+              that picking one collapses the accordion (see CategoryList). */}
+          {hasCategories && activeCategory && (
+            <p className="mb-4 text-sm font-medium text-muted md:hidden">
+              Category: <span className="text-paper">{activeCategory.breadcrumb}</span>
+            </p>
+          )}
+
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
             {ranked.map((c, i) => {
               const isEligible =
@@ -259,6 +272,7 @@ export default function PollClient({
           contestantName={pendingVote.contestantName}
           categoryId={pendingVote.categoryId}
           onClose={() => setPendingVote(null)}
+          voter={voter}
         />
       )}
 

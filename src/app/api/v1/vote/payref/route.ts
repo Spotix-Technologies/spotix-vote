@@ -16,9 +16,11 @@
  */
 
 import { NextRequest, NextResponse } from "next/server"
-import { adminDb, adminAuth } from "@/lib/firebase-admin"
+import { adminDb } from "@/lib/firebase-admin"
 import { getScopeEligibility } from "@/lib/tie-breaker"
 import { buildVoteReference } from "@/lib/reference-id"
+import { createSupabaseServerClient } from "@/lib/election/auth-server"
+import { fetchVoterProfile, upsertVoterPhone } from "@/lib/election/voter-profile"
 
 export async function POST(request: NextRequest) {
   let body: Record<string, any>
@@ -38,8 +40,10 @@ export async function POST(request: NextRequest) {
     categoryId,      // group polls
     buyerBearsBurden,
     serviceFee,
-    // Identity
-    userId,
+    // Identity — guestName/guestEmail only used when nobody's signed in.
+    // guestPhone doubles as "the phone number typed at checkout" for BOTH
+    // guests and signed-in voters — see the signed-in branch below, which
+    // writes it back to voter_profiles when it's new/changed.
     guestName,
     guestEmail,
     guestPhone,
@@ -106,40 +110,49 @@ export async function POST(request: NextRequest) {
   }
 
   // ── Resolve payer identity ─────────────────────────────────────────────────
+  // Spotix Vote's voter accounts live in Supabase Auth (see lib/election/
+  // auth-server.ts / auth-client.ts) — the httpOnly session cookie rides
+  // along automatically on this same-origin fetch, so we read it directly
+  // instead of expecting the client to attach a bearer token. See
+  // lib/auth-tokens.ts's "spotix-vote" audience note for why this app
+  // doesn't use the jose-JWT path the other Spotix portals use.
   let verifiedUserId: string | null = null
   let payerEmail: string | null = null
   let payerName:  string | null = null
   let payerPhone: string | null = null
 
-  if (userId) {
-    const authHeader = request.headers.get("Authorization")
-    if (authHeader?.startsWith("Bearer ")) {
-      try {
-        const decoded      = await adminAuth.verifyIdToken(authHeader.split("Bearer ")[1])
-        verifiedUserId     = decoded.uid
-        const userDoc      = await adminDb.collection("users").doc(verifiedUserId).get()
-        if (userDoc.exists) {
-          const ud = userDoc.data()!
-          payerEmail = firstNonBlank(ud.email, decoded.email)
-          // Logged-in voters skip the "details" form entirely (see VoteModal),
-          // so this is the ONLY place a name gets set for them — unlike the
-          // guest path, there's no form to fall back to. Never let this end
-          // up null/empty, or PayWithPaystack's upsertPaystackCustomer call
-          // ends up sending no first_name/last_name to Paystack at all.
-          // Fallback chain mirrors PaymentClient.tsx's fetchUserData for tickets.
-          payerName  = firstNonBlank(ud.fullName, ud.displayName, ud.username, decoded.name) ?? "Valued Customer"
-          payerPhone = firstNonBlank(ud.phoneNumber, ud.phone)
-        } else {
-          // No Firestore profile yet (e.g. brand-new auth user) — same
-          // guarantee applies here.
-          payerEmail = firstNonBlank(decoded.email)
-          payerName  = firstNonBlank(decoded.name) ?? "Valued Customer"
-        }
-      } catch { /* Invalid token — guest path */ }
-    }
-  }
+  const supabaseServer = await createSupabaseServerClient()
+  const {
+    data: { user },
+  } = await supabaseServer.auth.getUser()
 
-  if (!verifiedUserId) {
+  if (user?.email) {
+    verifiedUserId = user.id
+    payerEmail = firstNonBlank(user.email)
+    // Logged-in voters skip the "details" form entirely (see VoteModal),
+    // so this is the ONLY place a name gets set for them — unlike the
+    // guest path, there's no form to fall back to. Never let this end up
+    // null/empty, or upsertPaystackCustomer ends up sending no
+    // first_name/last_name to Paystack at all.
+    payerName = firstNonBlank(user.user_metadata?.full_name) ?? "Valued Customer"
+
+    // Phone: voter_profiles is the source of truth (kept fresh here);
+    // fall back to whatever was captured at signup if the profile row
+    // is somehow missing it.
+    const profile = await fetchVoterProfile(verifiedUserId).catch(() => null)
+    payerPhone = firstNonBlank(profile?.phone, user.user_metadata?.phone)
+
+    // "If they fill in their number, store it back" — a signed-in voter
+    // typing a new/changed phone at checkout updates their profile for
+    // next time, fire-and-forget so it never blocks the vote.
+    const typedPhone = guestPhone?.trim()
+    if (typedPhone && typedPhone !== payerPhone) {
+      payerPhone = typedPhone
+      upsertVoterPhone(verifiedUserId, payerEmail, typedPhone).catch((err) =>
+        console.error("[vote/payref] Failed to save phone back to voter_profiles:", err),
+      )
+    }
+  } else {
     if (!guestEmail?.trim() || !guestName?.trim()) {
       return NextResponse.json(
         { error: "Guest name and email are required for non-authenticated users" },

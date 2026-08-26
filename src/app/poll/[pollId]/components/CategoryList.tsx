@@ -2,32 +2,7 @@
 
 import { useState } from "react"
 
-/**
- * src/app/poll/[pollId]/components/CategoryList.tsx
- *
- * Booker's CategoryBlock.tsx lets an organiser nest categories as deep
- * as they want (top-level, then sub-categories, then sub-sub-categories,
- * and so on) — this renders that whole tree, at whatever depth it
- * actually is, as two layouts sharing the same state:
- *
- *  - Desktop (md+): the sidebar-next-to-the-contestant-grid layout —
- *    everything expanded, its own independently-scrolling column, sticky
- *    under the header. Same shape as before, just genuinely showing the
- *    hierarchy now (top-level categories with their nested children
- *    indented underneath) instead of a flattened list of every leaf.
- *  - Mobile: an accordion with ONE toggle per TOP-LEVEL category —
- *    collapsed by default, so there's a short list to scan instead of a
- *    long one to scroll past before ever reaching the contestant grid
- *    below. Expanding a top-level section reveals everything nested
- *    under it in full, however many levels deep that goes — the ask was
- *    "the categories list per top level category" toggles open and
- *    shut, not that every single nested level gets its own toggle too.
- *    Whichever section contains the currently-selected leaf (e.g. from
- *    a deep link or a search result) starts open automatically.
- *
- * Selecting a leaf category calls onSelectLeaf(categoryId) — PollClient
- * owns which leaf is "active" and which contestants that drives.
- */
+
 
 export interface CategoryTreeNode {
   categoryId: string
@@ -43,7 +18,42 @@ export interface CategoryListProps {
   className?: string
 }
 
+/** Top-level node ids whose subtree contains `activeCategoryId` — the
+ *  accordion sections that should start open (e.g. after a deep link or
+ *  a search-result pick lands on a nested leaf). */
+function defaultOpenIds(nodes: CategoryTreeNode[], activeCategoryId?: string): Set<string> {
+  const ids = new Set<string>()
+  if (!activeCategoryId) return ids
+  for (const node of nodes) {
+    if (node.categoryId === activeCategoryId || subtreeContainsId(node, activeCategoryId)) {
+      ids.add(node.categoryId)
+    }
+  }
+  return ids
+}
+
 export function CategoryList({ nodes, activeCategoryId, onSelectLeaf, className = "" }: CategoryListProps) {
+  // Only the mobile accordion needs open/closed state — the desktop tree
+  // always renders everything expanded (see CategoryTreeItem's isToggle).
+  const [mobileOpenIds, setMobileOpenIds] = useState<Set<string>>(() => defaultOpenIds(nodes, activeCategoryId))
+
+  function handleMobileSelectLeaf(categoryId: string) {
+    onSelectLeaf(categoryId)
+    // Collapse everything once a pick is made — the category name shown
+    // above the contestant grid is the confirmation now, not a section
+    // left open on screen.
+    setMobileOpenIds(new Set())
+  }
+
+  function handleMobileToggle(categoryId: string) {
+    setMobileOpenIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(categoryId)) next.delete(categoryId)
+      else next.add(categoryId)
+      return next
+    })
+  }
+
   return (
     <>
       {/* Desktop sidebar */}
@@ -55,7 +65,14 @@ export function CategoryList({ nodes, activeCategoryId, onSelectLeaf, className 
 
       {/* Mobile accordion */}
       <div className={`mb-6 rounded-2xl border border-line bg-ink-2 p-2 md:hidden ${className}`}>
-        <CategoryTree nodes={nodes} activeCategoryId={activeCategoryId} onSelectLeaf={onSelectLeaf} collapsible />
+        <CategoryTree
+          nodes={nodes}
+          activeCategoryId={activeCategoryId}
+          onSelectLeaf={handleMobileSelectLeaf}
+          collapsible
+          openIds={mobileOpenIds}
+          onToggle={handleMobileToggle}
+        />
       </div>
     </>
   )
@@ -67,12 +84,16 @@ function CategoryTree({
   onSelectLeaf,
   depth = 0,
   collapsible,
+  openIds,
+  onToggle,
 }: {
   nodes: CategoryTreeNode[]
   activeCategoryId?: string
   onSelectLeaf: (categoryId: string) => void
   depth?: number
   collapsible: boolean
+  openIds?: Set<string>
+  onToggle?: (categoryId: string) => void
 }) {
   return (
     <ul className={depth === 0 ? "space-y-1" : "mt-1 space-y-1 border-l border-line pl-3"}>
@@ -84,6 +105,8 @@ function CategoryTree({
           activeCategoryId={activeCategoryId}
           onSelectLeaf={onSelectLeaf}
           collapsible={collapsible}
+          openIds={openIds}
+          onToggle={onToggle}
         />
       ))}
     </ul>
@@ -96,19 +119,23 @@ function CategoryTreeItem({
   activeCategoryId,
   onSelectLeaf,
   collapsible,
+  openIds,
+  onToggle,
 }: {
   node: CategoryTreeNode
   depth: number
   activeCategoryId?: string
   onSelectLeaf: (categoryId: string) => void
   collapsible: boolean
+  openIds?: Set<string>
+  onToggle?: (categoryId: string) => void
 }) {
   const isLeaf = node.children.length === 0
   // Only TOP-LEVEL groups get a toggle on mobile — once one's open,
   // everything nested inside just shows, however deep. Desktop never
   // collapses anything (collapsible is always false there).
   const isToggle = collapsible && depth === 0 && !isLeaf
-  const [open, setOpen] = useState(() => !isToggle || subtreeContainsId(node, activeCategoryId))
+  const open = isToggle ? (openIds?.has(node.categoryId) ?? false) : true
 
   if (isLeaf) {
     const active = node.categoryId === activeCategoryId
@@ -133,7 +160,7 @@ function CategoryTreeItem({
       {isToggle ? (
         <button
           type="button"
-          onClick={() => setOpen((o) => !o)}
+          onClick={() => onToggle?.(node.categoryId)}
           aria-expanded={open}
           className="flex w-full items-center justify-between rounded-xl px-3.5 py-2.5 text-left text-sm font-semibold text-paper transition-colors hover:bg-ink-3"
         >
@@ -150,6 +177,8 @@ function CategoryTreeItem({
           onSelectLeaf={onSelectLeaf}
           depth={depth + 1}
           collapsible={collapsible}
+          openIds={openIds}
+          onToggle={onToggle}
         />
       )}
     </li>

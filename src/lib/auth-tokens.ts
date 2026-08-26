@@ -6,6 +6,19 @@
  * ── Audiences ─────────────────────────────────────────────────────────────────
  *   "spotix-booker"  — tokens issued at POST /api/v1/auth  (organiser portal)
  *   "spotix-user"    — tokens issued at POST /api/v1/auth  (user portal)
+ *   "spotix-vote"    — reserved audience label for THIS app (Spotix Vote).
+ *                      Spotix Vote does NOT actually mint/verify tokens
+ *                      through this module — voter identity is Supabase
+ *                      Auth's own httpOnly session cookie (see
+ *                      lib/election/auth-server.ts + auth-client.ts), and
+ *                      every route that needs "is this voter logged in,
+ *                      and who are they" (e.g. api/v1/vote/payref) reads
+ *                      that cookie-backed session directly rather than a
+ *                      jose-signed access token. This constant exists so
+ *                      the audience namespace stays consistent if/when
+ *                      Spotix Vote's identity ever gets folded into the
+ *                      shared spotix-user session instead of its own
+ *                      standalone Supabase project.
  *
  * A token signed for one audience is REJECTED by the other portal's middleware
  * even though both use the same ACCESS_TOKEN_SECRET.
@@ -34,7 +47,7 @@ export const COOKIE_ACCESS_TOKEN     = "spotix_u_at";
 export const COOKIE_REFRESH_TOKEN    = "spotix_u_rt";
 export const COOKIE_REFRESH_TOKEN_ID = "spotix_u_rtid";
 
-export type PortalAudience = "spotix-booker" | "spotix-user";
+export type PortalAudience = "spotix-booker" | "spotix-user" | "spotix-vote";
 
 export interface SpotixTokenPayload extends JWTPayload {
   uid:       string;

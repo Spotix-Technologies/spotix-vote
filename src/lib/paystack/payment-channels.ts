@@ -9,9 +9,19 @@
  * Apple Pay is listed (on Apple devices only, see device.ts) but isn't
  * wired to a real Paystack channel yet — selecting it just shows a
  * "not available yet" notice and lets the buyer pick something else.
+ *
+ * Mobile Money is deliberately NOT listed: per Paystack's own docs
+ * (https://paystack.com/docs/payments/payment-channels/), the Mobile
+ * Money channel is "currently available in Ghana, Kenya, and Côte
+ * d'Ivoire" — it does not support NGN at all. Passing "mobile_money" in
+ * `channels` for an NGN transaction is exactly what was causing the
+ * widget to silently ignore the restriction and fall back to showing
+ * every channel — Paystack has nothing valid to narrow down to, so it
+ * shows everything instead. If Spotix ever expands to GHS/KES/XOF,
+ * this can come back gated on the transaction currency.
  */
 
-export type PaymentMethodId = "bank_transfer" | "card" | "mobile_money" | "apple_pay"
+export type PaymentMethodId = "bank_transfer" | "card" | "apple_pay"
 
 export interface PaymentMethodOption {
   id: PaymentMethodId
@@ -36,13 +46,6 @@ export const PAYMENT_METHOD_OPTIONS: PaymentMethodOption[] = [
     label: "Card",
     description: "Debit or credit card",
     channels: ["card"],
-    available: true,
-  },
-  {
-    id: "mobile_money",
-    label: "Mobile Money",
-    description: "Pay with your mobile money wallet",
-    channels: ["mobile_money"],
     available: true,
   },
   {
