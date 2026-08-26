@@ -16,12 +16,6 @@ const METHOD_ICONS: Record<PaymentMethodId, React.ReactNode> = {
       <path d="M2.5 9.5h19" />
     </svg>
   ),
-  mobile_money: (
-    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="6" y="2.5" width="12" height="19" rx="2.2" />
-      <path d="M10 18.5h4" />
-    </svg>
-  ),
   apple_pay: (
     <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
       <path d="M16.365 1.43c0 1.14-.462 2.25-1.14 3.06-.75.9-1.98 1.59-3.03 1.5a3.36 3.36 0 0 1-.03-.42c0-1.14.51-2.28 1.2-3.03.75-.87 2.04-1.53 3-1.56.03.15.03.3.03.45ZM20.1 17.55c-.36.84-.54 1.2-1.02 1.95-.63 1.02-1.5 2.28-2.61 2.31-.99.03-1.26-.63-2.61-.63s-1.68.6-2.64.63c-1.11.03-1.95-1.14-2.58-2.16-1.77-2.85-1.95-6.21-.87-8.01.78-1.29 2.01-2.04 3.15-2.04 1.17 0 1.9.63 2.85.63.93 0 1.5-.63 2.85-.63 1.02 0 2.1.54 2.88 1.5-2.52 1.38-2.1 4.98.6 6.45Z" />
